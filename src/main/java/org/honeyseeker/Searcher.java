@@ -144,12 +144,13 @@ public class Searcher {
             );
         }
 
-        try (BOMInputStream bomInputStream = BOMInputStream.builder()
+        try (InputStream rawStream = zip.getInputStream(entry);
+             BOMInputStream bomInputStream = BOMInputStream.builder()
                 .setByteOrderMarks(
                         ByteOrderMark.UTF_8, ByteOrderMark.UTF_16LE, ByteOrderMark.UTF_16BE, ByteOrderMark.UTF_32LE,
                         ByteOrderMark.UTF_32BE
                 )
-                .setInputStream(zip.getInputStream(entry)).get();
+                .setInputStream(rawStream).get();
              InputStreamReader inputStreamReader = new InputStreamReader(
                      bomInputStream, XmlCharsetDetector.getCharsetFromXml(zip, entry, logger)
              );

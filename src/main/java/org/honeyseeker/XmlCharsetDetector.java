@@ -2,6 +2,8 @@ package org.honeyseeker;
 
 import com.ibm.icu.text.CharsetDetector;
 import com.ibm.icu.text.CharsetMatch;
+import org.apache.commons.io.ByteOrderMark;
+import org.apache.commons.io.input.BOMInputStream;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -17,10 +19,12 @@ import java.util.regex.Matcher;
 
 public class XmlCharsetDetector {
     private static final Pattern QUOTE_PATTERN = Pattern.compile("[\"']");
-    private static final int CONFIDENCE_THRESHOLD = 50;
+    private static final int CONFIDENCE_THRESHOLD = 90;
     private static final int MIN_ENCODING_NAME_LENGTH = 3;
 
-    public static Charset getCharsetFromXml(ZipFile zip, ZipEntry entry, Logger logger) throws IOException {
+    public static Charset getCharsetFromXml(ZipFile zip, ZipEntry entry,
+                                            @SuppressWarnings("unused") Logger logger // kept for debugging
+    ) throws IOException {
         // Читаем первые несколько килобайт файла для детекции кодировки
         byte[] fileStartBytes = readFileStart(zip, entry, 4096);
 
@@ -35,15 +39,18 @@ public class XmlCharsetDetector {
         // Выбираем лучшую кодировку
         Charset finalCharset = selectBestCharset(declaredCharset, matches);
 
-        // Логируем предупреждения, если есть расхождения
-        logEncodingWarnings(entry.getName(), declaredCharset, matches, logger);
-
         return finalCharset != null ? finalCharset : StandardCharsets.UTF_8;
     }
 
     @SuppressWarnings("SameParameterValue")
     private static byte[] readFileStart(ZipFile zip, ZipEntry entry, int numBytes) throws IOException {
-        try (InputStream is = zip.getInputStream(entry)) {
+        try (InputStream rawStream = zip.getInputStream(entry);
+             BOMInputStream is = BOMInputStream.builder()
+                .setByteOrderMarks(
+                        ByteOrderMark.UTF_8, ByteOrderMark.UTF_16LE, ByteOrderMark.UTF_16BE, ByteOrderMark.UTF_32LE,
+                        ByteOrderMark.UTF_32BE
+                )
+                .setInputStream(rawStream).get()) {
             byte[] buffer = new byte[numBytes];
             int bytesRead = is.read(buffer);
             return bytesRead == -1 ? new byte[0] : Arrays.copyOf(buffer, bytesRead);
@@ -109,15 +116,13 @@ public class XmlCharsetDetector {
         // Если есть и декларированная кодировка, и детектированная
         if (declaredCharset != null) {
             // Проверяем, совпадает ли декларированная кодировка с детектированной
-            for (CharsetMatch match : matches) {
-                try {
-                    Charset detectedCharset = Charset.forName(match.getName());
-                    if (detectedCharset.equals(declaredCharset)) {
-                        return declaredCharset; // Совпадение - доверяем декларации
-                    }
-                } catch (IllegalArgumentException e) {
-                    // Некорректное имя кодировки, продолжаем пробовать
+            try {
+                Charset detectedCharset = Charset.forName(matches[0].getName());
+                if (detectedCharset.equals(declaredCharset)) {
+                    return declaredCharset; // Совпадение - доверяем декларации
                 }
+            } catch (IllegalArgumentException e) {
+                // Некорректное имя кодировки, продолжаем пробовать
             }
 
             // Если не совпадает, выбираем ту, у которой выше уверенность
@@ -140,6 +145,7 @@ public class XmlCharsetDetector {
         }
     }
 
+    @SuppressWarnings("unused") // don't need all these warnings during normal work, but want to keep code for debugging
     private static void logEncodingWarnings(String name, Charset declaredCharset, CharsetMatch[] matches,
                                             Logger logger) {
         if (declaredCharset == null || matches == null || matches.length == 0) {
@@ -147,13 +153,13 @@ public class XmlCharsetDetector {
         }
 
         try {
-            Charset detectedCharset = Charset.forName(matches[0].getName());
-            if (!detectedCharset.equals(declaredCharset)) {
+            String detectedCharset = matches[0].getName();
+            if (!detectedCharset.startsWith(declaredCharset.name())) {
                 logger.logWarn(String.format(
                         "%s: encoding mismatch. Declared: %s, Detected: %s (confidence: %d%%)%n",
                         name,
                         declaredCharset.name(),
-                        detectedCharset.name(),
+                        detectedCharset,
                         matches[0].getConfidence())
                 );
 
