@@ -3,6 +3,8 @@ package org.honeyseeker;
 import java.util.List;
 
 public interface Logger {
-    void log(List<String> lines);
-    void log(String line);
+    void logInfo(List<String> lines);
+    void logInfo(String line);
+    void logWarn(List<String> lines);
+    void logWarn(String line);
 }

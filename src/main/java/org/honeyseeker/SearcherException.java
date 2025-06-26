@@ -1,11 +1,13 @@
 package org.honeyseeker;
 
 import lombok.Getter;
+import lombok.Setter;
 
 @Getter
+@Setter
 public class SearcherException extends Exception {
-    private final String currentFile;
-    private final String currentEntry;
+    private String currentFile;
+    private String currentEntry;
 
     public SearcherException(String message, String currentFile, String currentEntry, Throwable cause) {
         super(message, cause);

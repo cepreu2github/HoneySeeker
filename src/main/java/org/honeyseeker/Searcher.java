@@ -3,6 +3,7 @@ package org.honeyseeker;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import net.greypanther.natsort.CaseInsensitiveSimpleNaturalComparator;
+import org.apache.commons.io.ByteOrderMark;
 import org.apache.commons.io.input.BOMInputStream;
 import org.w3c.dom.Document;
 import org.w3c.dom.NodeList;
@@ -14,8 +15,6 @@ import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.xpath.*;
 import java.io.*;
-import java.nio.charset.Charset;
-import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -27,7 +26,6 @@ import java.util.zip.ZipFile;
 @RequiredArgsConstructor
 public class Searcher {
     private static final int CONTEXT_SIZE = 300;
-    private static final Pattern QUOTE_PATTERN = Pattern.compile("[\"']");
     @Getter
     private SearchResult lastResult = new SearchResult();
     private final Logger logger;
@@ -35,10 +33,10 @@ public class Searcher {
 
     public SearchResult doSearch(Config config, boolean isBackwards) throws SearcherException {
         if (lastResult.getEncounters().isEmpty()) {
-            logger.log("start search");
+            logger.logInfo("start search");
             lastResult = processZipFiles(config, false, isBackwards);
         } else {
-            logger.log("continue search");
+            logger.logInfo("continue search");
             lastResult = processZipFiles(config, true, isBackwards);
         }
 
@@ -50,7 +48,7 @@ public class Searcher {
         File folder = new File(config.getFolder());
 
         if (!folder.exists() || !folder.isDirectory()) {
-            logger.log("folder not exists or not a folder");
+            logger.logWarn("folder not exists or not a folder");
             return new SearchResult();
         }
 
@@ -76,14 +74,14 @@ public class Searcher {
             if (!foundStartPoint) {
                 continue;
             }
-            logger.log("process archive: " + zipFile.getName());
+            logger.logInfo("process archive: " + zipFile.getName());
             SearchResult result = processSingleZipFile(zipFile, config, shouldSkipCurrent, isBackwards);
             if (!result.getEncounters().isEmpty()) {
                 return result;
             }
             config.setCurrentEntry("");
         }
-        logger.log("end of search");
+        logger.logInfo("end of search");
         return new SearchResult();
     }
 
@@ -118,7 +116,7 @@ public class Searcher {
                     if (!foundStartPoint) {
                         continue;
                     }
-                    logger.log("read file: " + entry.getName());
+                    logger.logInfo("read file: " + entry.getName());
                     SearchResult result = searchInZipEntryContent(zip, entry, config);
                     if (!result.getEncounters().isEmpty()) {
                         return result;
@@ -129,7 +127,8 @@ public class Searcher {
             String errorMessage = "opening zip " + zipFile.getName() + ", details: " + e;
             throw new SearcherException(errorMessage, zipFile.getName(), "", e);
         } catch (SearcherException e) {
-            throw new SearcherException(e.getMessage(), zipFile.getName(), e.getCurrentEntry(), e.getCause());
+            e.setCurrentFile(zipFile.getName());
+            throw e;
         }
         return new SearchResult();
     }
@@ -140,13 +139,22 @@ public class Searcher {
 
         if (shouldStop) {
             shouldStop = false;
-            throw new SearcherException("forced stop", null, entry.getName(), new InterruptedException("stop"));
+            throw new InterruptedByUserSearcherException(
+                    "forced stop", null, entry.getName(), new InterruptedException("stop")
+            );
         }
 
-        try (BOMInputStream bomInputStream = BOMInputStream.builder().setInputStream(zip.getInputStream(entry)).get();
-             InputStreamReader inputStreamReader = new InputStreamReader(bomInputStream, getCharsetFromXml(zip, entry));
+        try (BOMInputStream bomInputStream = BOMInputStream.builder()
+                .setByteOrderMarks(
+                        ByteOrderMark.UTF_8, ByteOrderMark.UTF_16LE, ByteOrderMark.UTF_16BE, ByteOrderMark.UTF_32LE,
+                        ByteOrderMark.UTF_32BE
+                )
+                .setInputStream(zip.getInputStream(entry)).get();
+             InputStreamReader inputStreamReader = new InputStreamReader(
+                     bomInputStream, XmlCharsetDetector.getCharsetFromXml(zip, entry, logger)
+             );
              BufferedReader reader = new BufferedReader(inputStreamReader)) {
-            bookFullXml = reader.lines().collect(Collectors.joining());
+            bookFullXml = reader.lines().collect(Collectors.joining(" "));
         } catch (IOException e) {
             String errorMessage = "reading fb2 " + entry.getName() + ", details: " + e;
             throw new SearcherException(errorMessage, null, entry.getName(), e);
@@ -160,7 +168,7 @@ public class Searcher {
             bookTextOnly = getBookRawText(document);
         } catch (ParserConfigurationException | SAXException | XPathExpressionException | IOException e) {
             String warningMessage = "warning, failed to parse fb2 " + entry.getName() + ", details: " + e;
-            logger.log(warningMessage);
+            logger.logWarn(warningMessage);
             bookTextOnly = ""; // will continue to use full XML as fallback
         }
         return searchInText(bookTextOnly, bookFullXml, config.getSearchQuery(), zip, entry);
@@ -216,25 +224,5 @@ public class Searcher {
             content.append(textNodes.item(i).getNodeValue()).append(" ");
         }
         return content.toString().trim();
-    }
-
-    private static Charset getCharsetFromXml(ZipFile zip, ZipEntry entry) throws IOException {
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(zip.getInputStream(entry)))) {
-            String firstLine = reader.readLine();
-            if (firstLine != null && firstLine.startsWith("<?xml")) {
-                int encodingIndex = firstLine.indexOf("encoding=");
-                if (encodingIndex != -1) {
-                    Matcher matcher = QUOTE_PATTERN.matcher(firstLine);
-                    if (matcher.find(encodingIndex + 10)) {
-                        String encoding = firstLine.substring(
-                                encodingIndex + 10,
-                                matcher.start()
-                        );
-                        return Charset.forName(encoding);
-                    }
-                }
-            }
-        }
-        return StandardCharsets.UTF_8;
     }
 }

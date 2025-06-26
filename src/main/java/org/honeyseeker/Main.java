@@ -54,6 +54,7 @@ public class Main extends JFrame implements KeyListener, Logger {
     ));
     private final Searcher searcher = new Searcher(this);
     private boolean highlightEnabled = true;
+    private boolean isWarningHappened = false;
 
     private Main(){
         super("HoneySeeker");
@@ -141,7 +142,7 @@ public class Main extends JFrame implements KeyListener, Logger {
                 }
 
             } catch (IOException | ParserConfigurationException | SAXException | TransformerException e) {
-                log("error opening book: " + e);
+                logWarn("error opening book: " + e);
                 e.printStackTrace();
             }
         }
@@ -153,7 +154,7 @@ public class Main extends JFrame implements KeyListener, Logger {
                 String url = "https://flibusta.is/b/" + config.getCurrentEntry().replace(".fb2", "");
                 Desktop.getDesktop().browse(new URI(url));
             } catch (IOException | URISyntaxException e) {
-                log("error opening book: " + e);
+                logWarn("error opening book: " + e);
                 e.printStackTrace();
             }
         }
@@ -183,8 +184,12 @@ public class Main extends JFrame implements KeyListener, Logger {
                     config.setCurrentEntry(result.getCurrentEntry());
                 }
             } catch (SearcherException e) {
-                log("error: " + e.getMessage());
-                e.printStackTrace();
+                if (e instanceof InterruptedByUserSearcherException) {
+                    logInfo(e.getMessage());
+                } else {
+                    logWarn("error: " + e.getMessage());
+                    e.printStackTrace();
+                }
                 config.setCurrentFile(e.getCurrentFile());
                 config.setCurrentEntry(e.getCurrentEntry());
             }
@@ -235,7 +240,7 @@ public class Main extends JFrame implements KeyListener, Logger {
 
     private void saveConfig() {
         updateConfigFromFields();
-        log(config.save());
+        logInfo(config.save());
     }
 
     private void updateConfigFromFields() {
@@ -246,7 +251,7 @@ public class Main extends JFrame implements KeyListener, Logger {
     }
 
     private void loadConfig() {
-        log(config.load());
+        logInfo(config.load());
         updateFieldsFromConfig();
     }
 
@@ -328,8 +333,7 @@ public class Main extends JFrame implements KeyListener, Logger {
         return "<html>" + String.join("<br> ", log) + "<html>";
     }
 
-    @Override
-    public void log(List<String> newLogEntries){
+    private void writeToConsole(List<String> newLogEntries) {
         for (String logEntry: newLogEntries) {
             System.out.println(logEntry);
         }
@@ -342,8 +346,28 @@ public class Main extends JFrame implements KeyListener, Logger {
     }
 
     @Override
-    public void log(String line) {
-        log(List.of(line));
+    public void logInfo(List<String> newLogEntries){
+        if (!isWarningHappened) {
+            writeToConsole(newLogEntries);
+        }
+    }
+
+    @Override
+    public void logInfo(String line) {
+        logInfo(List.of(line));
+    }
+
+    @Override
+    public void logWarn(List<String> lines) {
+        writeToConsole(lines);
+        if (!isWarningHappened) {
+            isWarningHappened = true;
+        }
+    }
+
+    @Override
+    public void logWarn(String line) {
+        logWarn(List.of(line));
     }
 
     public static void main(String[] args) {
